@@ -136,4 +136,9 @@ components: transforms: json_parser: {
 			]
 		}
 	}
+
+	telemetry: metrics: {
+		events_processed_total:  _metrics._internal._events_processed_total
+		processing_errors_total: _metrics._internal._processing_errors_total
+	}
 }

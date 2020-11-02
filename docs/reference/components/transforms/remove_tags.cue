@@ -48,4 +48,8 @@ components: transforms: remove_tags: {
 			summary:      true
 		}
 	}
+
+	telemetry: metrics: {
+		events_processed_total: _metrics._internal._events_processed_total
+	}
 }

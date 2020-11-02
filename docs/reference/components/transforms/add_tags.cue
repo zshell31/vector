@@ -65,4 +65,8 @@ components: transforms: add_tags: {
 			summary:      true
 		}
 	}
+
+	telemetry: metrics: {
+		events_processed_total: _metrics._internal._events_processed_total
+	}
 }

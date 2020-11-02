@@ -154,6 +154,8 @@ _values: {
 	//
 	// For example, the `http` sink has a `HTTP` title.
 	title: string
+
+	telemetry?: metrics?: #MetricOutput
 }
 
 // `#CompressionAlgorithm` specified data compression algorithm.
@@ -552,8 +554,10 @@ _values: {
 #MetricTags: [Name=string]: close({
 	description: string
 	examples: [string, ...]
-	required: bool
+	required: bool | *false
+	options?: #Enum
 	name:     Name
+	default?: string
 })
 
 #MetricType: "counter" | "distribution" | "gauge" | "histogram" | "summary"
@@ -852,6 +856,11 @@ _values: {
 
 #Unit: "bytes" | "events" | "milliseconds" | "requests" | "seconds"
 
+// Configuration for the Vector instance itself
+#Vector: {
+	telemetry: metrics: #MetricOutput
+}
+
 components: close({
 	sources:    #Components
 	transforms: #Components
@@ -896,3 +905,5 @@ remap: {
 		name: Name
 	}
 }
+
+vector: #Vector
