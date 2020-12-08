@@ -152,6 +152,7 @@ urls: {
 	globbing:                                                 "https://en.wikipedia.org/wiki/Glob_(programming)"
 	graphql:                                                  "https://graphql.org"
 	graphql_playground:                                       "https://github.com/graphql/graphql-playground"
+	gregorian:                                                "https://en.wikipedia.org/wiki/Proleptic_Gregorian_calendar"
 	grok:                                                     "https://grokdebug.herokuapp.com/"
 	grok_debugger:                                            "https://grokdebug.herokuapp.com/"
 	grok_patterns:                                            "https://github.com/daschl/grok/tree/master/patterns"
