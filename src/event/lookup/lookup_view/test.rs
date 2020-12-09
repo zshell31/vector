@@ -53,7 +53,6 @@ fn quoted() {
     assert_eq!(lookup.to_string(), input);
 }
 
-
 #[test]
 fn push() {
     crate::test_util::trace_init();
@@ -209,8 +208,10 @@ fn lookup_to_string_and_serialize() {
                 // **WARNING:**: You **can not** deserialize lookups (that is, views, the buffers
                 // are fine) out of str slices with escapes. It's invalid. You **must** use lookupbufs.
                 if lookup.to_string().contains('\"') {
-                    trace!("Need to filter this test, it contains escape chars and cannot be \
-                            deserialized into a lookup view. Use a LookupBuf.");
+                    trace!(
+                        "Need to filter this test, it contains escape chars and cannot be \
+                            deserialized into a lookup view. Use a LookupBuf."
+                    );
                     return;
                 }
 

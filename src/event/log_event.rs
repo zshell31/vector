@@ -11,6 +11,9 @@ use std::{
     fmt::Debug,
     iter::FromIterator,
 };
+use async_graphql::static_assertions::_core::iter::{Flatten, Map};
+use nom::lib::std::collections::btree_map::Iter;
+use crate::event::value::Pairs;
 
 #[derive(PartialEq, Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LogEvent {
@@ -32,7 +35,10 @@ impl LogEvent {
         // This step largely exists so that we can make `cursor` a `Value` right off the bat.
         // We couldn't go like `let cursor = Value::from(self.fields)` since that'd take the value.
         let mut cursor = match first_step {
-            Segment::Field { name, requires_quoting: _ } => {
+            Segment::Field {
+                name,
+                requires_quoting: _,
+            } => {
                 if lookup_len == 1 {
                     // Terminus: We **must** insert here or abort.
                     trace!(key = ?name, "Getting from root.");
@@ -59,7 +65,13 @@ impl LogEvent {
             }
             cursor = match (segment, cursor) {
                 // Fields access maps.
-                (Segment::Field { ref name, requires_quoting: _ }, Some(Value::Map(map))) => {
+                (
+                    Segment::Field {
+                        ref name,
+                        requires_quoting: _,
+                    },
+                    Some(Value::Map(map)),
+                ) => {
                     trace!(key = ?name, "Descending into map.");
                     map.get(*name)
                 }
@@ -69,7 +81,14 @@ impl LogEvent {
                     array.get(i)
                 }
                 // The rest, it's not good.
-                (Segment::Index(_), _) | (Segment::Field { name: _, requires_quoting: _ }, _) => {
+                (Segment::Index(_), _)
+                | (
+                    Segment::Field {
+                        name: _,
+                        requires_quoting: _,
+                    },
+                    _,
+                ) => {
                     trace!("Unmatched lookup.");
                     None
                 }
@@ -93,7 +112,10 @@ impl LogEvent {
         // This step largely exists so that we can make `cursor` a `Value` right off the bat.
         // We couldn't go like `let cursor = Value::from(self.fields)` since that'd take the value.
         let mut cursor = match first_step {
-            Segment::Field { name, requires_quoting: _ } => {
+            Segment::Field {
+                name,
+                requires_quoting: _,
+            } => {
                 if lookup_len == 1 {
                     // Terminus: We **must** insert here or abort.
                     trace!(key = ?name, "Getting from root.");
@@ -120,7 +142,13 @@ impl LogEvent {
             }
             cursor = match (segment, cursor) {
                 // Fields access maps.
-                (Segment::Field { name, requires_quoting: _ }, Some(Value::Map(map))) => {
+                (
+                    Segment::Field {
+                        name,
+                        requires_quoting: _,
+                    },
+                    Some(Value::Map(map)),
+                ) => {
                     trace!(key = ?name, "Descending into map.");
                     map.get_mut(name)
                 }
@@ -130,7 +158,14 @@ impl LogEvent {
                     array.get_mut(i)
                 }
                 // The rest, it's not good.
-                (Segment::Index(_), _) | (Segment::Field  { name: _, requires_quoting: _ }, _) => {
+                (Segment::Index(_), _)
+                | (
+                    Segment::Field {
+                        name: _,
+                        requires_quoting: _,
+                    },
+                    _,
+                ) => {
                     trace!("Unmatched lookup.");
                     None
                 }
@@ -162,7 +197,10 @@ impl LogEvent {
         // This step largely exists so that we can make `cursor` a `Value` right off the bat.
         // We couldn't go like `let cursor = Value::from(self.fields)` since that'd take the value.
         let mut cursor = match first_step {
-            SegmentBuf::Field { name, requires_quoting: _ } => {
+            SegmentBuf::Field {
+                name,
+                requires_quoting: _,
+            } => {
                 if lookup_len == 1 {
                     // Terminus: We **must** insert here or abort.
                     trace!(key = ?name, value = ?value, "Inserted into root.");
@@ -190,7 +228,13 @@ impl LogEvent {
         for (lookup_index, segment) in lookup_iter {
             cursor = match (segment.clone(), cursor) {
                 // Fields access maps.
-                (SegmentBuf::Field { ref name, requires_quoting: _ }, &mut Value::Map(ref mut map)) => {
+                (
+                    SegmentBuf::Field {
+                        ref name,
+                        requires_quoting: _,
+                    },
+                    &mut Value::Map(ref mut map),
+                ) => {
                     if lookup_index == lookup_len.saturating_sub(1) {
                         // Terminus: We **must** insert here or abort.
                         trace!(key = ?name, "Creating field inside map.");
@@ -245,7 +289,13 @@ impl LogEvent {
                         }
                     }
                 }
-                (SegmentBuf::Field { name, requires_quoting: _ }, cursor_ref) if cursor_ref == &mut Value::Null => {
+                (
+                    SegmentBuf::Field {
+                        name,
+                        requires_quoting: _,
+                    },
+                    cursor_ref,
+                ) if cursor_ref == &mut Value::Null => {
                     trace!(key = ?name, lookup_index, lookup_len, "Did not discover map to descend into, but found a `null`. Since a map is expected. Creating one.");
                     let mut map = BTreeMap::default();
                     if lookup_index == lookup_len.saturating_sub(1) {
@@ -276,7 +326,11 @@ impl LogEvent {
                         *cursor_ref = Value::Array(newly_created_array);
                         return None;
                     } else {
-                        trace!(lookup_index, lookup_len, "Non-terminus array segment, scaffolding a null for later filling.");
+                        trace!(
+                            lookup_index,
+                            lookup_len,
+                            "Non-terminus array segment, scaffolding a null for later filling."
+                        );
                         while newly_created_array.len() < i {
                             trace!("Pushing Null to meet required size.");
                             newly_created_array.push(Value::Null);
@@ -318,7 +372,10 @@ impl LogEvent {
         // This step largely exists so that we can make `cursor` a `Value` right off the bat.
         // We couldn't go like `let cursor = Value::from(self.fields)` since that'd take the value.
         let mut cursor = match first_step {
-            Segment::Field { name, requires_quoting: _ } => {
+            Segment::Field {
+                name,
+                requires_quoting: _,
+            } => {
                 if lookup_len == 1 {
                     trace!(key = ?name, "Removed from root.");
                     return self.fields.remove(*name);
@@ -342,7 +399,13 @@ impl LogEvent {
         for (index, segment) in lookup_iter {
             cursor = match (segment, cursor) {
                 // Fields access maps.
-                (Segment::Field { name, requires_quoting: _ }, Some(Value::Map(map))) => {
+                (
+                    Segment::Field {
+                        name,
+                        requires_quoting: _,
+                    },
+                    Some(Value::Map(map)),
+                ) => {
                     if index == lookup_len.saturating_sub(1) {
                         trace!(key = ?name, "Removing field inside map.");
                         retval = map.remove(*name);
@@ -376,7 +439,14 @@ impl LogEvent {
                     }
                 }
                 // The rest, it's not good.
-                (Segment::Index(_), _) | (Segment::Field { name: _, requires_quoting: _ }, _) => {
+                (Segment::Index(_), _)
+                | (
+                    Segment::Field {
+                        name: _,
+                        requires_quoting: _,
+                    },
+                    _,
+                ) => {
                     trace!("Unmatched lookup.");
                     None
                 }
@@ -432,7 +502,14 @@ impl LogEvent {
         trace!("Seeking to entry.");
         let mut walker = lookup.into_iter().enumerate();
 
-        let mut current_pointer = if let Some((index, SegmentBuf::Field { name: segment, requires_quoting: _ })) = walker.next() {
+        let mut current_pointer = if let Some((
+            index,
+            SegmentBuf::Field {
+                name: segment,
+                requires_quoting: _,
+            },
+        )) = walker.next()
+        {
             trace!(%segment, index, "Seeking segment.");
             self.fields.entry(segment)
         } else {
@@ -446,11 +523,23 @@ impl LogEvent {
         for (index, segment) in walker {
             trace!(%segment, index, "Seeking next segment.");
             current_pointer = match (segment, current_pointer) {
-                (SegmentBuf::Field { name, requires_quoting: _ }, Entry::Occupied(entry)) => match entry.into_mut() {
+                (
+                    SegmentBuf::Field {
+                        name,
+                        requires_quoting: _,
+                    },
+                    Entry::Occupied(entry),
+                ) => match entry.into_mut() {
                     Value::Map(map) => map.entry(name),
                     v => return Err(format!("Looking up field on a non-map value: {:?}", v).into()),
                 },
-                (SegmentBuf::Field { name, requires_quoting: _ }, Entry::Vacant(entry)) => {
+                (
+                    SegmentBuf::Field {
+                        name,
+                        requires_quoting: _,
+                    },
+                    Entry::Vacant(entry),
+                ) => {
                     trace!(segment = %name, index, "Met vacant entry.");
                     return Err(format!(
                         "Tried to step into `{}` of `{}`, but it did not exist.",
@@ -715,7 +804,6 @@ mod test {
             assert_eq!(event.get_mut(&lookup), Some(&mut value));
             assert_eq!(event.remove(&lookup, false), Some(value));
 
-
             let lookup = LookupBuf::from_str("root[0]")?;
             let mut value = Value::Boolean(true);
             event.insert(lookup.clone(), value.clone());
@@ -814,7 +902,11 @@ mod test {
             }
             let pairs = event.keys(true).collect::<Vec<_>>();
             for lookup in lookups {
-                assert!(pairs.contains(&lookup.clone_lookup()), "Failed while looking for {}", lookup);
+                assert!(
+                    pairs.contains(&lookup.clone_lookup()),
+                    "Failed while looking for {}",
+                    lookup
+                );
             }
             Ok(())
         }
@@ -837,7 +929,12 @@ mod test {
             }
             let pairs = event.keys(false).collect::<Vec<_>>();
             for lookup in lookups.clone() {
-                assert!(pairs.contains(&lookup.clone_lookup()), "Failed while looking for {:?} in {:?}", lookup, pairs);
+                assert!(
+                    pairs.contains(&lookup.clone_lookup()),
+                    "Failed while looking for {:?} in {:?}",
+                    lookup,
+                    pairs
+                );
             }
             Ok(())
         }
@@ -866,7 +963,11 @@ mod test {
             //       LookupBufs this rule does not apply.
             let pairs = event.keys(true).map(|k| k.into_buf()).collect::<Vec<_>>();
             for lookup in lookups {
-                assert!(pairs.contains(&lookup), "Failed while looking for {}", lookup);
+                assert!(
+                    pairs.contains(&lookup),
+                    "Failed while looking for {}",
+                    lookup
+                );
             }
             Ok(())
         }

@@ -144,9 +144,7 @@ impl Value {
     ///
     /// This is notably useful for things like influxdb logs where we list only leaves.
     #[instrument(level = "trace")]
-    pub fn is_leaf<'a>(
-        &'a self,
-    ) -> bool {
+    pub fn is_leaf<'a>(&'a self) -> bool {
         match &self {
             Value::Boolean(_)
             | Value::Bytes(_)
@@ -154,12 +152,8 @@ impl Value {
             | Value::Float(_)
             | Value::Integer(_)
             | Value::Null => true,
-            Value::Map(_) => {
-                false
-            },
-            Value::Array(_) => {
-                false
-            },
+            Value::Map(_) => false,
+            Value::Array(_) => false,
         }
     }
 
@@ -187,7 +181,8 @@ impl Value {
             Value::Map(m) => {
                 trace!(prefix = ?prefix, "Enqueuing for iteration, may have children.");
                 let this = prefix.clone().into_iter();
-                let children = m.iter()
+                let children = m
+                    .iter()
                     .map(move |(k, v)| {
                         let lookup = prefix.clone().map_or_else(
                             || Lookup::from(k),
@@ -198,18 +193,21 @@ impl Value {
                         );
                         trace!(lookup = ?lookup, "Seeking lookups inside non-leaf element.");
                         v.lookups(Some(lookup), only_leaves)
-                    }).flatten();
+                    })
+                    .flatten();
 
                 if only_leaves {
                     Box::new(children)
                 } else {
                     Box::new(this.chain(children))
                 }
-            },
+            }
             Value::Array(a) => {
                 trace!(prefix = ?prefix, "Enqueuing for iteration, may have children.");
                 let this = prefix.clone().into_iter();
-                let children = a.iter().enumerate()
+                let children = a
+                    .iter()
+                    .enumerate()
                     .map(move |(k, v)| {
                         let lookup = prefix.clone().map_or_else(
                             || Lookup::from(k),
@@ -220,14 +218,15 @@ impl Value {
                         );
                         trace!(lookup = ?lookup, "Seeking lookups inside non-leaf element.");
                         v.lookups(Some(lookup), only_leaves)
-                    }).flatten();
+                    })
+                    .flatten();
 
                 if only_leaves {
                     Box::new(children)
                 } else {
                     Box::new(this.chain(children))
                 }
-            },
+            }
         }
     }
 
@@ -238,65 +237,20 @@ impl Value {
     /// If provided a `prefix`, it will always produce with that prefix included, and all nodes
     /// will be prefixed with that lookup.
     #[instrument(level = "trace")]
-    pub fn pairs<'a>(
-        &'a self,
-        prefix: Option<Lookup<'a>>,
-        only_leaves: bool,
-    ) -> Box<dyn Iterator<Item = (Lookup<'a>, &'a Value)> + 'a> {
+    pub fn pairs<'values>(&'values self, prefix: Option<Lookup<'values>>, only_leaves: bool) -> Pairs<'values> {
         match &self {
             Value::Boolean(_)
             | Value::Bytes(_)
             | Value::Timestamp(_)
             | Value::Float(_)
             | Value::Integer(_)
-            | Value::Null => Box::new(prefix.map(move |v| {
-                trace!(prefix = ?v, "Enqueuing leaf for iteration.");
-                (v, self)
-            }).into_iter()),
-            Value::Map(m) => {
-                trace!(prefix = ?prefix, "Enqueuing for iteration, may have children.");
-                let this = prefix.clone().map(|v| (v, self)).into_iter();
-                let children = m.iter()
-                    .map(move |(k, v)| {
-                        let lookup = prefix.clone().map_or_else(
-                            || Lookup::from(k),
-                            |mut l| {
-                                l.push(Segment::from(k.as_str()));
-                                l
-                            },
-                        );
-                        trace!(lookup = ?lookup, "Seeking lookups inside non-leaf element.");
-                        v.pairs(Some(lookup), only_leaves)
-                    }).flatten();
-
-                if only_leaves {
-                    Box::new(children)
-                } else {
-                    Box::new(this.chain(children))
-                }
-            },
-            Value::Array(a) => {
-                trace!(prefix = ?prefix, "Enqueuing for iteration, may have children.");
-                let this = prefix.clone().map(|v| (v, self)).into_iter();
-                let children = a.iter().enumerate()
-                    .map(move |(k, v)| {
-                        let lookup = prefix.clone().map_or_else(
-                            || Lookup::from(k),
-                            |mut l| {
-                                l.push(Segment::index(k));
-                                l
-                            },
-                        );
-                        trace!(lookup = ?lookup, "Seeking lookups inside non-leaf element.");
-                        v.pairs(Some(lookup), only_leaves)
-                    }).flatten();
-
-                if only_leaves {
-                    Box::new(children)
-                } else {
-                    Box::new(this.chain(children))
-                }
-            },
+            | Value::Null => Pairs::leaf(prefix, self),
+            Value::Map(_children) => {
+                Pairs::map(prefix, self, only_leaves)
+            }
+            Value::Array(_children) => {
+                Pairs::array(prefix, self, only_leaves)
+            }
         }
     }
 }
@@ -475,7 +429,8 @@ impl From<serde_json::Value> for Value {
 impl From<serde_json::Map<String, serde_json::Value>> for Value {
     fn from(json_value: serde_json::Map<String, serde_json::Value>) -> Self {
         Value::Map(
-            json_value.into_iter()
+            json_value
+                .into_iter()
                 .map(|(key, value)| (key, Value::from(value)))
                 .collect(),
         )
@@ -663,6 +618,110 @@ impl Value {
             Value::Map(_) => "map",
             Value::Array(_) => "array",
             Value::Null => "null",
+        }
+    }
+}
+
+pub enum Pairs<'values> {
+    Leaf {
+        current_prefix: Option<Lookup<'values>>,
+        value: &'values Value,
+    },
+    Map {
+        current_prefix: Option<Lookup<'values>>,
+        value: &'values Value,
+        inner_pairs: Box<Pairs<'values>>,
+        only_leaves: bool,
+        returned_self: bool,
+    },
+    Array {
+        current_prefix: Option<Lookup<'values>>,
+        value: &'values Value,
+        inner_pairs: Box<Pairs<'values>>,
+        only_leaves: bool,
+        returned_self: bool,
+    },
+}
+
+impl<'values> Pairs<'values> {
+    fn map(current_prefix: Option<Lookup<'values>>, value: &'values Value, only_leaves: bool) -> Self {
+        match value {
+            Value::Map(_children) => {
+                Self::Map {
+                    current_prefix: current_prefix.clone(),
+                    value,
+                    inner_pairs: Box::new(value.pairs(current_prefix, only_leaves)),
+                    only_leaves,
+                    returned_self: false
+                }
+            },
+            _ => unreachable!("Unreachable codepath in internal Pairs descent. Please report this."),
+        }
+    }
+
+    fn array(current_prefix: Option<Lookup<'values>>, value: &'values Value, only_leaves: bool) -> Self {
+        match value {
+            Value::Array(_children) => {
+                Self::Array {
+                    current_prefix: current_prefix.clone(),
+                    value,
+                    inner_pairs: Box::new(value.pairs(current_prefix, only_leaves)),
+                    only_leaves,
+                    returned_self: false
+                }
+            },
+            _ => unreachable!("Unreachable codepath in internal Pairs descent. Please report this."),
+        }
+    }
+
+    fn leaf(current_prefix: Option<Lookup<'values>>, value: &'values Value) -> Self {
+        Self::Leaf {
+            current_prefix,
+            value,
+        }
+    }
+}
+
+impl<'values> Iterator for Pairs<'values> {
+    type Item = (Lookup<'values>, &'values Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Pairs::Map { ref current_prefix, ref value, ref mut inner_pairs, ref only_leaves, ref mut returned_self } => {
+                if !*only_leaves && !*returned_self && current_prefix.is_some() {
+                    *returned_self = true;
+                    current_prefix.clone().map(|l| (l, *value))
+                } else {
+                    inner_pairs.next().map(|(iter_lookup, value)| {
+                        let lookup = current_prefix.clone().map_or_else(|| {
+                            iter_lookup.clone()
+                        }, |mut lookup| {
+                            lookup.extend(iter_lookup.clone());
+                            lookup
+                        });
+                        (lookup, value)
+                    })
+                }
+            },
+            Pairs::Array { ref current_prefix, ref value, ref mut inner_pairs, ref only_leaves, ref mut returned_self } => {
+                if !*only_leaves && !*returned_self && current_prefix.is_some() {
+                    *returned_self = true;
+                    current_prefix.clone().map(|l| (l, *value))
+                } else {
+                    inner_pairs.next().map(|(iter_lookup, value)| {
+                        let lookup = current_prefix.clone().map_or_else(|| {
+                            iter_lookup.clone()
+                        }, |mut lookup| {
+                            lookup.extend(iter_lookup.clone());
+                            lookup
+                        });
+                        (lookup, value)
+                    })
+                }
+            },
+            Pairs::Leaf { ref current_prefix, ref value} => {
+                current_prefix.clone().map(|l| (l, *value))
+            },
         }
     }
 }

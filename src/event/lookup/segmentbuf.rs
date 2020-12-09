@@ -11,14 +11,17 @@ pub enum SegmentBuf {
     Field {
         name: String,
         // This is a very lazy optimization to avoid having to scan for escapes.
-        requires_quoting: bool
+        requires_quoting: bool,
     },
     Index(usize),
 }
 
 impl SegmentBuf {
     pub const fn field(name: String, requires_quoting: bool) -> SegmentBuf {
-        SegmentBuf::Field { name, requires_quoting }
+        SegmentBuf::Field {
+            name,
+            requires_quoting,
+        }
     }
 
     pub fn is_field(&self) -> bool {
@@ -36,7 +39,10 @@ impl SegmentBuf {
     #[instrument]
     pub(crate) fn as_segment<'a>(&'a self) -> Segment<'a> {
         match self {
-            SegmentBuf::Field { name, requires_quoting} => Segment::field(name.as_str(), *requires_quoting),
+            SegmentBuf::Field {
+                name,
+                requires_quoting,
+            } => Segment::field(name.as_str(), *requires_quoting),
             SegmentBuf::Index(i) => Segment::index(*i),
         }
     }
@@ -46,8 +52,14 @@ impl Display for SegmentBuf {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
         match self {
             SegmentBuf::Index(i) => write!(formatter, "{}", i),
-            SegmentBuf::Field { name, requires_quoting: false } => write!(formatter, "{}", name),
-            SegmentBuf::Field { name, requires_quoting: true } => write!(formatter, "\"{}\"", name),
+            SegmentBuf::Field {
+                name,
+                requires_quoting: false,
+            } => write!(formatter, "{}", name),
+            SegmentBuf::Field {
+                name,
+                requires_quoting: true,
+            } => write!(formatter, "\"{}\"", name),
         }
     }
 }
@@ -60,9 +72,11 @@ impl From<String> for SegmentBuf {
             // So we have to take a slice and clone it.
             let len = name.len();
             name = name[1..len - 1].to_string();
-
         }
-        Self::Field { name, requires_quoting }
+        Self::Field {
+            name,
+            requires_quoting,
+        }
     }
 }
 
