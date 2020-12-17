@@ -325,6 +325,31 @@ mod test {
         result
     }
 
+    fn metric_buffer_single(metric: Metric) {
+        let buffer = rebuffer(vec![metric.clone()]);
+        assert_eq!(buffer, [[metric]]);
+    }
+
+    #[test]
+    fn metric_buffer_single_counter() {
+        metric_buffer_single(sample_counter(0, "production", Absolute, 5.0));
+    }
+
+    #[test]
+    fn metric_buffer_single_gauge() {
+        metric_buffer_single(sample_gauge(0, Absolute, 6.0));
+    }
+
+    #[test]
+    fn metric_buffer_single_set() {
+        metric_buffer_single(sample_set(0, &[1, 2, 3]));
+    }
+
+    #[test]
+    fn metric_buffer_single_distribution_histogram() {
+        metric_buffer_single(sample_distribution_histogram(2, 10));
+    }
+
     #[test]
     fn metric_buffer_counters() {
         let mut events = Vec::new();
