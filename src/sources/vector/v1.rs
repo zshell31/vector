@@ -9,11 +9,9 @@ use crate::{
     tcp::TcpKeepaliveConfig,
     tls::{MaybeTlsSettings, TlsConfig},
 };
-use bytes::{Bytes, BytesMut};
 use getset::Setters;
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use tokio_util::codec::LengthDelimitedCodec;
 
 #[derive(Deserialize, Serialize, Debug, Clone, Setters)]
 #[serde(deny_unknown_fields)]
@@ -85,13 +83,8 @@ struct VectorSource;
 
 impl TcpSource for VectorSource {
     type Error = std::io::Error;
-    type Decoder = LengthDelimitedCodec;
 
-    fn decoder(&self) -> Self::Decoder {
-        LengthDelimitedCodec::new()
-    }
-
-    fn build_event(&self, frame: BytesMut, _host: Bytes) -> Option<Event> {
+    fn build_event(&self, frame: &[u8], _host: &str) -> Option<Event> {
         let byte_size = frame.len();
         match proto::EventWrapper::decode(frame).map(Event::from) {
             Ok(event) => {

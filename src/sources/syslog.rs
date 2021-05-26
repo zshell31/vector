@@ -138,7 +138,6 @@ impl SourceConfig for SyslogConfig {
             #[cfg(unix)]
             Mode::Unix { path } => Ok(build_unix_stream_source(
                 path,
-                SyslogDecoder::new(self.max_length),
                 host_key,
                 cx.shutdown,
                 cx.out,
@@ -173,14 +172,9 @@ struct SyslogTcpSource {
 
 impl TcpSource for SyslogTcpSource {
     type Error = LinesCodecError;
-    type Decoder = SyslogDecoder;
 
-    fn decoder(&self) -> Self::Decoder {
-        SyslogDecoder::new(self.max_length)
-    }
-
-    fn build_event(&self, frame: String, host: Bytes) -> Option<Event> {
-        Some(event_from_str(&self.host_key, Some(host), &frame))
+    fn build_event(&self, frame: &[u8], host: &str) -> Option<Event> {
+        Some(event_from_str(&self.host_key, Some(host), frame))
     }
 }
 
@@ -426,12 +420,12 @@ pub fn udp(
                 async move {
                     match frame {
                         Ok((bytes, received_from)) => {
-                            let received_from = received_from.ip().to_string().into();
+                            let received_from = received_from.ip().to_string();
 
                             std::str::from_utf8(&bytes)
                                 .map_err(|error| emit!(SyslogUdpUtf8Error { error }))
                                 .ok()
-                                .map(|s| Ok(event_from_str(&host_key, Some(received_from), s)))
+                                .map(|s| Ok(event_from_str(&host_key, Some(&received_from), s)))
                         }
                         Err(error) => {
                             emit!(SyslogUdpReadError { error });
@@ -467,7 +461,7 @@ fn resolve_year((month, _date, _hour, _min, _sec): IncompleteDate) -> i32 {
 // TODO: many more cases to handle:
 // octet framing (i.e. num bytes as ascii string prefix) with and without delimiters
 // null byte delimiter in place of newline
-fn event_from_str(host_key: &str, default_host: Option<Bytes>, line: &str) -> Event {
+fn event_from_str(host_key: &str, default_host: Option<&str>, line: &str) -> Event {
     let line = line.trim();
     let parsed = syslog_loose::parse_message_with_year(line, resolve_year);
     let mut event = Event::from(parsed.msg);
@@ -481,8 +475,7 @@ fn event_from_str(host_key: &str, default_host: Option<Bytes>, line: &str) -> Ev
         event.as_mut_log().insert("source_ip", default_host);
     }
 
-    let parsed_hostname = parsed.hostname.map(|x| Bytes::from(x.to_owned()));
-    if let Some(parsed_host) = parsed_hostname.or(default_host) {
+    if let Some(parsed_host) = parsed.hostname.or(default_host) {
         event.as_mut_log().insert(host_key, parsed_host);
     }
 

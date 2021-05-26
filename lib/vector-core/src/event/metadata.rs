@@ -12,7 +12,11 @@ use std::sync::Arc;
     Clone, Debug, Default, Deserialize, Getters, PartialEq, PartialOrd, Serialize, Setters,
 )]
 pub struct EventMetadata {
-    /// Used to store the datadog API from sources to sinks
+    /// The host from which this event originated.
+    #[getset(get = "pub", set = "pub")]
+    #[serde(default, skip)]
+    host: Option<String>,
+    /// Used to store the datadog API from sources to sinks.
     #[getset(get = "pub", set = "pub")]
     #[serde(default, skip)]
     datadog_api_key: Option<Arc<str>>,
@@ -21,6 +25,11 @@ pub struct EventMetadata {
 }
 
 impl EventMetadata {
+    /// Instantiate a new event metadata object with default properties.
+    pub fn new() -> Self {
+        Default::default()
+    }
+
     /// Replace the finalizers array with the given one.
     pub fn with_finalizer(mut self, finalizer: EventFinalizer) -> Self {
         self.finalizers = EventFinalizers::new(finalizer);

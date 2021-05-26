@@ -7,7 +7,6 @@ use crate::{
     tls::{MaybeTlsIncomingStream, MaybeTlsListener, MaybeTlsSettings},
     Pipeline,
 };
-use bytes::Bytes;
 use futures::{future::BoxFuture, stream, FutureExt, Sink, SinkExt, StreamExt, TryFutureExt};
 use listenfd::ListenFd;
 use serde::{de, Deserialize, Deserializer, Serialize};
@@ -17,7 +16,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
     time::sleep,
 };
-use tokio_util::codec::{Decoder, FramedRead, LinesCodecError};
+use tokio_util::codec::{BytesCodec, FramedRead, LinesCodecError};
 use tracing_futures::Instrument;
 
 async fn make_listener(
@@ -68,18 +67,12 @@ impl IsErrorFatal for std::io::Error {
     }
 }
 
-pub trait TcpSource: Clone + Send + Sync + 'static
-where
-    <<Self as TcpSource>::Decoder as tokio_util::codec::Decoder>::Item: std::marker::Send,
-{
+pub trait TcpSource: Clone + Send + Sync + 'static {
     // Should be default: `std::io::Error`.
     // Right now this is unstable: https://github.com/rust-lang/rust/issues/29661
     type Error: From<io::Error> + IsErrorFatal + std::fmt::Debug + std::fmt::Display + Send;
-    type Decoder: Decoder<Error = Self::Error> + Send + 'static + Send;
 
-    fn decoder(&self) -> Self::Decoder;
-
-    fn build_event(&self, frame: <Self::Decoder as Decoder>::Item, host: Bytes) -> Option<Event>;
+    fn build_event(&self, frame: &[u8], host: &str) -> Option<Event>;
 
     fn run(
         self,
@@ -143,7 +136,7 @@ where
 
                         let peer_addr = socket.peer_addr().ip().to_string();
                         let span = info_span!("connection", %peer_addr);
-                        let host = Bytes::from(peer_addr);
+                        let host = &peer_addr;
 
                         let tripwire = tripwire
                             .map(move |_| {
@@ -191,10 +184,9 @@ async fn handle_stream<T>(
     receive_buffer_bytes: Option<usize>,
     source: T,
     tripwire: BoxFuture<'static, ()>,
-    host: Bytes,
+    host: &str,
     out: impl Sink<Event> + Send + 'static,
 ) where
-    <<T as TcpSource>::Decoder as tokio_util::codec::Decoder>::Item: std::marker::Send,
     T: TcpSource,
 {
     tokio::select! {
@@ -222,7 +214,7 @@ async fn handle_stream<T>(
     }
 
     let mut shutdown_token = None;
-    let mut reader = FramedRead::new(socket, source.decoder());
+    let mut reader = FramedRead::new(socket, BytesCodec::new());
 
     stream::poll_fn(|cx| {
         if shutdown_token.is_none() {
@@ -262,8 +254,7 @@ async fn handle_stream<T>(
     ))
     .filter_map(move |frame| ready(match frame {
         Ok(frame) => {
-            let host = host.clone();
-            source.build_event(frame, host).map(Ok)
+            source.build_event(&frame, host).map(Ok)
         }
         Err(error) => {
             warn!(message = "Failed to read data from TCP source.", %error);

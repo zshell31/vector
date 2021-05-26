@@ -68,7 +68,6 @@ pub(super) fn unix_datagram(
         path,
         max_length,
         host_key,
-        LinesCodec::new_with_max_length(max_length),
         shutdown,
         out,
         |host_key, received_from, line| Some(build_event(host_key, received_from, line)),
@@ -84,7 +83,6 @@ pub(super) fn unix_stream(
 ) -> Source {
     build_unix_stream_source(
         path,
-        LinesCodec::new_with_max_length(max_length),
         host_key,
         shutdown,
         out,

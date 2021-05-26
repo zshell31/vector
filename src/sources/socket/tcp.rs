@@ -5,10 +5,9 @@ use crate::{
     tcp::TcpKeepaliveConfig,
     tls::TlsConfig,
 };
-use bytes::Bytes;
-use codec::BytesDelimitedCodec;
 use getset::{CopyGetters, Getters, Setters};
 use serde::{Deserialize, Serialize};
+use vector_core::event::EventMetadata;
 
 #[derive(Deserialize, Serialize, Debug, Clone, Getters, CopyGetters, Setters)]
 pub struct TcpConfig {
@@ -79,32 +78,18 @@ pub struct RawTcpSource {
 
 impl TcpSource for RawTcpSource {
     type Error = std::io::Error;
-    type Decoder = BytesDelimitedCodec;
 
-    fn decoder(&self) -> Self::Decoder {
-        BytesDelimitedCodec::new_with_max_length(b'\n', self.config.max_length)
-    }
-
-    fn build_event(&self, frame: Bytes, host: Bytes) -> Option<Event> {
+    fn build_event(&self, frame: &[u8], host: &str) -> Option<Event> {
         let byte_size = frame.len();
-        let mut event = Event::from(frame);
-
-        event.as_mut_log().insert(
-            crate::config::log_schema().source_type_key(),
-            Bytes::from("socket"),
-        );
-
-        let host_key = (self.config.host_key.clone())
-            .unwrap_or_else(|| crate::config::log_schema().host_key().to_string());
-
-        event.as_mut_log().insert(host_key, host);
+        let mut metadata = EventMetadata::new();
+        metadata.set_host(Some(host.to_owned()));
 
         emit!(SocketEventReceived {
             byte_size,
             mode: SocketMode::Tcp
         });
 
-        Some(event)
+        Some(Event::Frame(frame.to_owned(), metadata))
     }
 }
 

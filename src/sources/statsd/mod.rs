@@ -9,8 +9,6 @@ use crate::{
     tls::{MaybeTlsSettings, TlsConfig},
     Pipeline,
 };
-use bytes::Bytes;
-use codec::BytesDelimitedCodec;
 use futures::{stream, SinkExt, StreamExt, TryFutureExt};
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -198,13 +196,8 @@ struct StatsdTcpSource;
 
 impl TcpSource for StatsdTcpSource {
     type Error = std::io::Error;
-    type Decoder = BytesDelimitedCodec;
 
-    fn decoder(&self) -> Self::Decoder {
-        BytesDelimitedCodec::new(b'\n')
-    }
-
-    fn build_event(&self, line: Bytes, _host: Bytes) -> Option<Event> {
+    fn build_event(&self, line: &[u8], _host: &str) -> Option<Event> {
         let line = String::from_utf8_lossy(line.as_ref());
         parse_event(&line)
     }

@@ -12,17 +12,10 @@ pub struct UnixConfig {
     pub path: PathBuf,
 }
 
-fn build_event(_: &str, _: Option<Bytes>, line: &str) -> Option<Event> {
+fn build_event(_: &str, _: Option<&str>, bytes: &[u8]) -> Option<Event> {
     super::parse_event(line)
 }
 
 pub fn statsd_unix(config: UnixConfig, shutdown: ShutdownSignal, out: Pipeline) -> Source {
-    build_unix_stream_source(
-        config.path,
-        LinesCodec::new(),
-        String::new(),
-        shutdown,
-        out,
-        build_event,
-    )
+    build_unix_stream_source(config.path, String::new(), shutdown, out, build_event)
 }

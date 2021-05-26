@@ -6,14 +6,13 @@ use crate::{
     sources::Source,
     Pipeline,
 };
-use bytes::{Bytes, BytesMut};
-use codec::BytesDelimitedCodec;
+use bytes::BytesMut;
 use futures::SinkExt;
 use getset::{CopyGetters, Getters};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use tokio::net::UdpSocket;
-use tokio_util::codec::Decoder;
+use vector_core::event::EventMetadata;
 
 /// UDP processes messages per packet, where messages are separated by newline.
 #[derive(Deserialize, Serialize, Debug, Clone, Getters, CopyGetters)]
@@ -86,30 +85,20 @@ pub fn udp(
                         });
                     })?;
 
-                    let mut payload = buf.split_to(byte_size);
+                    let mut chunk = buf.split_to(byte_size);
+                    let mut metadata = EventMetadata::new();
+                    metadata.set_host(Some(address.to_string()));
 
-                    // UDP processes messages per payload, where messages are separated by newline
-                    // and stretch to end of payload.
-                    let mut decoder = BytesDelimitedCodec::new(b'\n');
-                    while let Ok(Some(line)) = decoder.decode_eof(&mut payload) {
-                        let mut event = Event::from(line);
+                    emit!(SocketEventReceived { byte_size, mode:SocketMode::Udp });
 
-                        event
-                            .as_mut_log()
-                            .insert(crate::config::log_schema().source_type_key(), Bytes::from("socket"));
-                        event
-                            .as_mut_log()
-                            .insert(host_key.clone(), address.to_string());
+                    let event = Event::Chunk(chunk.to_vec(), metadata);
 
-                        emit!(SocketEventReceived { byte_size,mode:SocketMode::Udp });
-
-                        tokio::select!{
-                            result = out.send(event) => {match result {
-                                Ok(()) => { },
-                                Err(()) => return Ok(()),
-                            }}
-                            _ = &mut shutdown => return Ok(()),
-                        }
+                    tokio::select! {
+                        result = out.send(event) => match result {
+                            Ok(()) => (),
+                            Err(()) => return Ok(()),
+                        },
+                        _ = &mut shutdown => return Ok(()),
                     }
                 }
                 _ = &mut shutdown => return Ok(()),
