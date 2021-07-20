@@ -242,6 +242,8 @@ mod tests {
             ),
             ("%{integer:field:scale(10)}", "1", Ok(Value::Float(10.0))),
             ("%{number:field:scale(0.5)}", "10.0", Ok(Value::Float(5.0))),
+            ("%{data:field:scale(10)}", "1.51", Ok(Value::Float(15.1))),
+            ("%{data:field:scale(10)}", "1.5", Ok(Value::Float(15.))),
         ]);
     }
 
@@ -361,5 +363,49 @@ mod tests {
             *value.expect("ok").expect("value"),
             Value::Array(vec![1.into(), "INFO".into(), Value::Null])
         );
+    }
+
+    #[test]
+    fn supports_array_filter() {
+        test_grok_pattern(vec![(
+            "%{data:field:array}",
+            "[1,2]",
+            Ok(Value::Array(vec!["1".into(), "2".into()])),
+        )]);
+        test_grok_pattern(vec![(
+            "%{data:field:array(\"\\\\t\")}", //TODO fix this test
+            "[1\t2]",
+            Ok(Value::Array(vec!["1".into(), "2".into()])),
+        )]);
+        test_grok_pattern(vec![(
+            "%{data:field:array(integer)}",
+            "[1,2]",
+            Ok(Value::Array(vec![1.into(), 2.into()])),
+        )]);
+        test_grok_pattern(vec![(
+            r#"%{data:field:array(";", integer)}"#,
+            "[1;2]",
+            Ok(Value::Array(vec![1.into(), 2.into()])),
+        )]);
+        test_grok_pattern(vec![(
+            r#"%{data:field:array("{}",";", integer)}"#,
+            "{1;2}",
+            Ok(Value::Array(vec![1.into(), 2.into()])),
+        )]);
+        test_grok_pattern(vec![(
+            "%{data:field:array(number)}",
+            "[1,2]",
+            Ok(Value::Array(vec![1.0.into(), 2.0.into()])),
+        )]);
+        test_grok_pattern(vec![(
+            "%{data:field:array(integer)}",
+            "[1,2]",
+            Ok(Value::Array(vec![1.into(), 2.into()])),
+        )]);
+        test_grok_pattern(vec![(
+            "%{data:field:array(scale(10))}",
+            "[1,2.1]",
+            Ok(Value::Array(vec![10.0.into(), 21.0.into()])),
+        )]);
     }
 }
