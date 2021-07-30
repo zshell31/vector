@@ -1,66 +1,36 @@
 use std::sync::Arc;
 
-use crate::metrics::handle::Handle;
-use metrics::{GaugeValue, Key, Recorder, Unit};
-use metrics_util::{MetricKind, NotTracked, Registry};
+use metrics::{Counter, Gauge,  Histogram, Key, Recorder, Unit};
+use metrics_util::Registry;
 
 /// [`VectorRecorder`] is a [`metrics::Recorder`] implementation that's suitable
 /// for the advanced usage that we have in Vector.
 pub(crate) struct VectorRecorder {
-    registry: Arc<Registry<Key, Handle, NotTracked<Handle>>>,
+    registry: Arc<Registry>,
 }
 
 impl VectorRecorder {
-    pub fn new(registry: Arc<Registry<Key, Handle, NotTracked<Handle>>>) -> Self {
+    pub fn new(registry: Arc<Registry>) -> Self {
         Self { registry }
     }
 }
 
 impl Recorder for VectorRecorder {
-    fn register_counter(&self, key: &Key, _unit: Option<Unit>, _description: Option<&'static str>) {
-        self.registry
-            .op(MetricKind::Counter, key, |_| {}, Handle::counter);
+    fn describe_counter(&self, _: &Key, _: Option<Unit>, _: Option<&'static str>) {}
+
+    fn describe_gauge(&self, _: &Key, _: Option<Unit>, _: Option<&'static str>) {}
+
+    fn describe_histogram(&self, _: &Key, _: Option<Unit>, _: Option<&'static str>) {}
+
+    fn register_counter(&self, key: &Key) -> Counter {
+        self.registry.get_or_create_counter(key, |c| Counter::from_arc(c.clone()))
     }
 
-    fn register_gauge(&self, key: &Key, _unit: Option<Unit>, _description: Option<&'static str>) {
-        self.registry
-            .op(MetricKind::Gauge, key, |_| {}, Handle::gauge);
+    fn register_gauge(&self, key: &Key) -> Gauge {
+        self.registry.get_or_create_gauge(key, |g| Gauge::from_arc(g.clone()))
     }
 
-    fn register_histogram(
-        &self,
-        key: &Key,
-        _unit: Option<Unit>,
-        _description: Option<&'static str>,
-    ) {
-        self.registry
-            .op(MetricKind::Histogram, key, |_| {}, Handle::histogram);
-    }
-
-    fn increment_counter(&self, key: &Key, value: u64) {
-        self.registry.op(
-            MetricKind::Counter,
-            key,
-            |handle| handle.increment_counter(value),
-            Handle::counter,
-        );
-    }
-
-    fn update_gauge(&self, key: &Key, value: GaugeValue) {
-        self.registry.op(
-            MetricKind::Gauge,
-            key,
-            |handle| handle.update_gauge(value),
-            Handle::gauge,
-        );
-    }
-
-    fn record_histogram(&self, key: &Key, value: f64) {
-        self.registry.op(
-            MetricKind::Histogram,
-            key,
-            |handle| handle.record_histogram(value),
-            Handle::histogram,
-        );
+    fn register_histogram(&self, key: &Key) -> Histogram {
+        self.registry.get_or_create_histogram(key, |h| Histogram::from_arc(h.clone()))
     }
 }

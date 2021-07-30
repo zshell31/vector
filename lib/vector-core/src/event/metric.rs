@@ -1,5 +1,4 @@
 use super::{BatchNotifier, EventFinalizer, EventMetadata};
-use crate::metrics::Handle;
 use crate::ByteSizeOf;
 use chrono::{DateTime, Utc};
 use getset::{Getters, MutGetters};
@@ -410,30 +409,7 @@ impl Metric {
     /// Convert the `metrics_runtime::Measurement` value plus the name and
     /// labels from a Key into our internal Metric format.
     #[allow(clippy::cast_precision_loss)]
-    pub fn from_metric_kv(key: &metrics::Key, handle: &Handle) -> Self {
-        let value = match handle {
-            Handle::Counter(counter) => MetricValue::Counter {
-                // NOTE this will truncate if `counter.count()` is a value
-                // greater than 2**52.
-                value: counter.count() as f64,
-            },
-            Handle::Gauge(gauge) => MetricValue::Gauge {
-                value: gauge.gauge(),
-            },
-            Handle::Histogram(histogram) => {
-                let buckets: Vec<Bucket> = histogram
-                    .buckets()
-                    .map(|(upper_limit, count)| Bucket { upper_limit, count })
-                    .collect();
-
-                MetricValue::AggregatedHistogram {
-                    buckets,
-                    sum: histogram.sum() as f64,
-                    count: histogram.count(),
-                }
-            }
-        };
-
+    pub fn from_metric_kv(key: &metrics::Key, value: MetricValue) -> Self {
         let labels = key
             .labels()
             .map(|label| (String::from(label.key()), String::from(label.value())))

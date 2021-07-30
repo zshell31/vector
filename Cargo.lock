@@ -929,7 +929,7 @@ dependencies = [
  "db-key",
  "futures 0.3.16",
  "leveldb",
- "metrics",
+ "metrics 0.17.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "pin-project 1.0.8",
  "pretty_assertions",
  "quickcheck",
@@ -2334,6 +2334,7 @@ dependencies = [
  "cfg-if 1.0.0",
  "crc32fast",
  "libc",
+ "libz-sys",
  "miniz_oxide",
 ]
 
@@ -3655,6 +3656,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "de5435b8549c16d423ed0c03dbaafe57cf6c3344744f1242520d59c9d8ecec66"
 dependencies = [
  "cc",
+ "cmake",
  "libc",
  "pkg-config",
  "vcpkg",
@@ -4048,7 +4050,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a00f42f354a2ed4894db863b3a4db47aef2d2e4435b937221749bd37a8a7aaa8"
 dependencies = [
  "ahash",
- "metrics-macros",
+ "metrics-macros 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "proc-macro-hack",
+]
+
+[[package]]
+name = "metrics"
+version = "0.17.0"
+source = "git+https://github.com/metrics-rs/metrics?branch=experiment/metrics-handles#fdcea2e2b45ba69e338818e561ab1ac4be681525"
+dependencies = [
+ "ahash",
+ "dyn-clone",
+ "metrics-macros 0.4.0 (git+https://github.com/metrics-rs/metrics?branch=experiment/metrics-handles)",
  "proc-macro-hack",
 ]
 
@@ -4067,14 +4080,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrics-macros"
+version = "0.4.0"
+source = "git+https://github.com/metrics-rs/metrics?branch=experiment/metrics-handles#fdcea2e2b45ba69e338818e561ab1ac4be681525"
+dependencies = [
+ "lazy_static",
+ "proc-macro-hack",
+ "proc-macro2 1.0.26",
+ "quote 1.0.9",
+ "regex",
+ "syn 1.0.72",
+]
+
+[[package]]
 name = "metrics-tracing-context"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ae4119c3866149edb3289413cdec4728420a0245f318457ec85029172c81d8b"
+source = "git+https://github.com/metrics-rs/metrics?branch=experiment/metrics-handles#fdcea2e2b45ba69e338818e561ab1ac4be681525"
 dependencies = [
  "itoa",
  "lockfree-object-pool",
- "metrics",
+ "metrics 0.17.0 (git+https://github.com/metrics-rs/metrics?branch=experiment/metrics-handles)",
  "metrics-util",
  "once_cell",
  "tracing 0.1.26",
@@ -4085,8 +4110,7 @@ dependencies = [
 [[package]]
 name = "metrics-util"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a58e622a425b7308e73e4390c68b8cb3df4443f2a57495e391b978412531638c"
+source = "git+https://github.com/metrics-rs/metrics?branch=experiment/metrics-handles#fdcea2e2b45ba69e338818e561ab1ac4be681525"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -4096,7 +4120,7 @@ dependencies = [
  "dashmap",
  "hashbrown 0.11.2",
  "indexmap",
- "metrics",
+ "metrics 0.17.0 (git+https://github.com/metrics-rs/metrics?branch=experiment/metrics-handles)",
  "num_cpus",
  "ordered-float",
  "parking_lot",
@@ -8315,7 +8339,7 @@ dependencies = [
  "matches",
  "maxminddb",
  "md-5",
- "metrics",
+ "metrics 0.17.0 (git+https://github.com/metrics-rs/metrics?branch=experiment/metrics-handles)",
  "metrics-tracing-context",
  "metrics-util",
  "mlua",
@@ -8474,7 +8498,7 @@ dependencies = [
  "indexmap",
  "lazy_static",
  "lookup",
- "metrics",
+ "metrics 0.17.0 (git+https://github.com/metrics-rs/metrics?branch=experiment/metrics-handles)",
  "metrics-tracing-context",
  "metrics-util",
  "mlua",

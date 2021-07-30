@@ -127,9 +127,12 @@ opentelemetry = { version = "0.15.0", default-features = false, features = ["tra
 opentelemetry-datadog = { version = "0.3.1", default-features = false, features = ["reqwest-client"] }
 
 # Metrics
-metrics = { version = "0.17.0", default-features = false, features = ["std"] }
-metrics-tracing-context = { version = "0.8.0", default-features = false }
-metrics-util = { version = "0.10.0", default-features = false, features = ["std"] }
+#metrics = { version = "0.17.0", default-features = false, features = ["std"] }
+#metrics-tracing-context = { version = "0.8.0", default-features = false }
+#metrics-util = { version = "0.10.0", default-features = false, features = ["std"] }
+metrics = { git = "https://github.com/metrics-rs/metrics", branch = "experiment/metrics-handles", default-features = false, features = ["std"] }
+metrics-tracing-context = { git = "https://github.com/metrics-rs/metrics", branch = "experiment/metrics-handles", default-features = false }
+metrics-util = { git = "https://github.com/metrics-rs/metrics", branch = "experiment/metrics-handles", default-features = false, features = ["std"] }
 
 # Aws
 rusoto_cloudwatch = { version = "0.47.0", optional = true }
@@ -212,7 +215,7 @@ dyn-clone = { version = "1.0.4", default-features = false }
 encoding_rs = { version = "0.8.28", features = ["serde"] }
 evmap = { git = "https://github.com/lukesteensen/evmap.git", rev = "45ba973c22715a68c5e99efad4b072421f7ad40b", default-features = false, features = ["bytes"], optional = true }
 exitcode = { version = "1.1.2", default-features = false }
-flate2 = { version = "1.0.20", default-features = false }
+flate2 = { version = "1.0.20", default-features = false, features = ["zlib-ng-compat"] }
 getset = { version = "0.1.1", default-features = false }
 glob = { version = "0.3.0", default-features = false }
 grok = { version = "1.1.0", default-features = false, optional = true }

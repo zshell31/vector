@@ -1,16 +1,14 @@
-mod handle;
 mod label_filter;
 mod recorder;
 
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 
-use crate::event::Metric;
-pub use crate::metrics::handle::{Counter, Handle};
+use crate::event::{Metric, MetricValue, StatisticKind, metric::Sample};
 use crate::metrics::label_filter::VectorLabelFilter;
 use crate::metrics::recorder::VectorRecorder;
 use metrics::Key;
 use metrics_tracing_context::TracingContextLayer;
-use metrics_util::{layers::Layer, Generational, NotTracked, Registry};
+use metrics_util::{layers::Layer, Registry};
 use once_cell::sync::OnceCell;
 
 static CONTROLLER: OnceCell<Controller> = OnceCell::new();
@@ -22,7 +20,7 @@ static CARDINALITY_KEY: Key = Key::from_static_name(CARDINALITY_KEY_NAME);
 
 /// Controller allows capturing metric snapshots.
 pub struct Controller {
-    registry: Arc<Registry<Key, Handle, NotTracked<Handle>>>,
+    registry: Arc<Registry>,
 }
 
 fn metrics_enabled() -> bool {
@@ -51,7 +49,7 @@ pub fn init() -> crate::Result<()> {
     ////
     //// Prepare the registry
     ////
-    let registry = Arc::new(Registry::<Key, Handle, NotTracked<Handle>>::untracked());
+    let registry = Arc::new(Registry::new());
 
     ////
     //// Prepare the controller
@@ -109,10 +107,26 @@ pub fn get_controller() -> crate::Result<&'static Controller> {
 
 /// Take a snapshot of all gathered metrics and expose them as metric
 /// [`Event`]s.
+#[allow(clippy::cast_precision_loss)]
 pub fn capture_metrics(controller: &Controller) -> impl Iterator<Item = Metric> {
     let mut metrics: Vec<Metric> = Vec::new();
-    controller.registry.visit(|_kind, (key, handle)| {
-        metrics.push(Metric::from_metric_kv(key, handle.get_inner()));
+    controller.registry.visit_counters(|key, counter| {
+        let value = counter.load(Ordering::Acquire) as f64;
+        let value = MetricValue::Counter { value };
+        metrics.push(Metric::from_metric_kv(key, value));
+    });
+
+    controller.registry.visit_gauges(|key, gauge| {
+        let value = f64::from_bits(gauge.load(Ordering::Acquire));
+        let value = MetricValue::Gauge { value };
+        metrics.push(Metric::from_metric_kv(key, value));
+    });
+
+    controller.registry.visit_histograms(|key, histogram| {
+        let mut samples = Vec::new();
+        histogram.clear_with(|xs| samples.extend(xs.iter().map(|x| Sample { value: *x, rate: 1 })));
+        let value = MetricValue::Distribution { samples, statistic: StatisticKind::Summary };
+        metrics.push(Metric::from_metric_kv(key, value));
     });
 
     // Add alias `events_processed_total` for `events_out_total`.
@@ -124,8 +138,8 @@ pub fn capture_metrics(controller: &Controller) -> impl Iterator<Item = Metric> 
         }
     }
 
-    let handle = Handle::Counter(Arc::new(Counter::with_count(metrics.len() as u64 + 1)));
-    metrics.push(Metric::from_metric_kv(&CARDINALITY_KEY, &handle));
+    let cardinality = MetricValue::Counter { value: metrics.len() as f64 + 1.0 };
+    metrics.push(Metric::from_metric_kv(&CARDINALITY_KEY, cardinality));
 
     metrics.into_iter()
 }
