@@ -58,7 +58,7 @@ with our previous (`v1`) TCP-based implementation of these two components:
 - `vector` sink does not work in k8s with dynamic IP addresses ([#2070][])
 - Allow for HTTP in the vector source and sinks ([#5124][])
 - Allow Vector Source and Sink to Communicate over GRPC ([#6646][])
-- RFC 5843 - Encoding/Decoding for Vector to Vector Communication ([#5843][])
+- RFC 5843 - Encoding/Decoding for Vector to Vector Communication ([#6032][])
 
 The new version transitions to using gRPC over HTTP as its communication
 protocol, which resolves those limitations.
