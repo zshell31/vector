@@ -52,11 +52,15 @@ Encoding fields other than `codec` are still valid.
 ### Vector source/sink version 2 released {#vector-source-sink}
 
 We've released a new major version (`v2`) of our `vector` [source][]/[sink][]
-components. This release resolves a lot of issues we saw with our previous
-(`v1`) TCP-based implementation of these two components.
+components. This release resolves several issues and limitations we experienced
+with our previous (`v1`) TCP-based implementation of these two components:
+
+- `vector` sink does not work in k8s with dynamic IP addresses ([#2070][])
+- Allow for HTTP in the vector source and sinks ([#5124][])
+- Allow Vector Source and Sink to Communicate over GRPC ([#6646][])
 
 The new version transitions to using gRPC over HTTP as its communication
-protocol, which resolves those issues.
+protocol, which resolves those limitations.
 
 To allow operators to transition at their leisure, this new release of Vector
 still defaults to `v1`. In the next release (`0.17.0`) we'll require operators
@@ -133,3 +137,6 @@ old version:
 
 [source]: https://vector.dev/docs/reference/configuration/sources/vector/
 [sink]: https://vector.dev/docs/reference/configuration/sinks/vector/
+[#2070]: https://github.com/timberio/vector/issues/2070
+[#5124]: https://github.com/timberio/vector/issues/5124
+[#6646]: https://github.com/timberio/vector/issues/6646
