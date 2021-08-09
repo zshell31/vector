@@ -136,6 +136,9 @@ old version:
     version = "v2"
 ```
 
+That's it! You are now using the new transport protocol for Vector-to-Vector
+communication.
+
 [source]: https://vector.dev/docs/reference/configuration/sources/vector/
 [sink]: https://vector.dev/docs/reference/configuration/sinks/vector/
 [#2070]: https://github.com/timberio/vector/issues/2070
