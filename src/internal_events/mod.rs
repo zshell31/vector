@@ -134,6 +134,8 @@ mod unix;
 mod vector;
 #[cfg(feature = "wasm")]
 mod wasm;
+#[cfg(feature = "sinks-websocket")]
+mod websocket;
 
 pub mod kubernetes;
 
@@ -271,6 +273,8 @@ pub use self::unix::*;
 pub use self::vector::*;
 #[cfg(feature = "wasm")]
 pub use self::wasm::*;
+#[cfg(feature = "sinks-websocket")]
+pub use self::websocket::*;
 #[cfg(windows)]
 pub use self::windows::*;
 #[cfg(feature = "sources-mongodb_metrics")]
