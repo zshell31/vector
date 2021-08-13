@@ -1,26 +1,34 @@
+use crate::internal_events::WsConnectionShutdown;
 use crate::{
     buffers::Acker,
     config::{DataType, GenerateConfig, SinkConfig, SinkContext, SinkDescription},
     dns, emit,
     event::Event,
-    internal_events::{WebSocketEventSendFail, WebSocketEventSendSuccess},
+    internal_events::{
+        ConnectionOpen, OpenGauge, WsConnectionError, WsConnectionEstablished, WsConnectionFailed,
+        WsEventSent,
+    },
     sinks::util::{
         encoding::{EncodingConfig, EncodingConfiguration},
+        retries::ExponentialBackoff,
         StreamSink,
     },
+    stream::StreamUtilExt,
     tls::{MaybeTlsSettings, MaybeTlsStream, TlsConfig, TlsError},
 };
 use async_trait::async_trait;
-use futures::{sink::SinkExt, stream::BoxStream, Sink, StreamExt};
+use futures::{
+    pin_mut, sink::SinkExt, stream::BoxStream, Future, FutureExt, Sink, Stream, StreamExt,
+};
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Snafu};
-use std::{error::Error, fmt::Debug, net::SocketAddr};
-use tokio::net::TcpStream;
+use std::{fmt::Debug, net::SocketAddr, time::Duration};
+use tokio::{net::TcpStream, sync::oneshot, time::sleep};
 use tokio_tungstenite::{
     client_async_with_config,
     tungstenite::{
         client::{uri_mode, IntoClientRequest},
-        error::{Error as WsError, UrlError},
+        error::{Error as WsError, ProtocolError, UrlError},
         handshake::client::Request as WsRequest,
         protocol::{Message, WebSocketConfig},
         stream::Mode as UriMode,
@@ -76,8 +84,7 @@ impl SinkConfig for WebSocketSinkConfig {
         cx: SinkContext,
     ) -> crate::Result<(super::VectorSink, super::Healthcheck)> {
         let connector = self.build_connector()?;
-        let ws_stream = self.build_ws_stream(&connector).await?;
-        let ws_sink = WebSocketSink::new(self.clone(), ws_stream, cx.acker());
+        let ws_sink = WebSocketSink::new(&self, connector.clone(), cx.acker());
 
         Ok((
             super::VectorSink::Stream(Box::new(ws_sink)),
@@ -94,40 +101,32 @@ impl SinkConfig for WebSocketSinkConfig {
     }
 }
 
+impl WebSocketSinkConfig {
+    fn build_connector(&self) -> Result<WebSocketConnector, WebSocketError> {
+        let tls = MaybeTlsSettings::from_config(&self.tls, false).context(ConnectError)?;
+        Ok(WebSocketConnector::new(self.uri.clone(), tls)?)
+    }
+}
+
 #[derive(Clone)]
 struct WebSocketConnector {
+    uri: String,
     host: String,
     port: u16,
     tls: MaybeTlsSettings,
 }
 
-impl WebSocketSinkConfig {
-    fn build_connector(&self) -> Result<WebSocketConnector, WebSocketError> {
-        let request = (&self.uri).into_client_request().context(CreateFailed)?;
+impl WebSocketConnector {
+    fn new(uri: String, tls: MaybeTlsSettings) -> Result<Self, WebSocketError> {
+        let request = (&uri).into_client_request().context(CreateFailed)?;
         let (host, port) = Self::extract_host_and_port(&request).context(CreateFailed)?;
-        let tls = MaybeTlsSettings::from_config(&self.tls, false).context(ConnectError)?;
 
-        Ok(WebSocketConnector::new(host, port, tls))
-    }
-
-    async fn build_ws_stream(
-        &self,
-        connector: &WebSocketConnector,
-    ) -> Result<WsStream<MaybeTlsStream<TcpStream>>, WebSocketError> {
-        let request = (&self.uri).into_client_request().context(CreateFailed)?;
-        let maybe_tls_stream = connector.connect().await?;
-
-        let ws_config = WebSocketConfig {
-            max_send_queue: None, // don't buffer messages
-            ..Default::default()
-        };
-
-        let (ws_stream, _response) =
-            client_async_with_config(request, maybe_tls_stream, Some(ws_config))
-                .await
-                .context(CreateFailed)?;
-
-        Ok(ws_stream)
+        Ok(Self {
+            uri,
+            host,
+            port,
+            tls,
+        })
     }
 
     fn extract_host_and_port(request: &WsRequest) -> Result<(String, u16), WsError> {
@@ -144,14 +143,14 @@ impl WebSocketSinkConfig {
 
         Ok((host, port))
     }
-}
 
-impl WebSocketConnector {
-    fn new(host: String, port: u16, tls: MaybeTlsSettings) -> Self {
-        Self { host, port, tls }
+    fn fresh_backoff() -> ExponentialBackoff {
+        ExponentialBackoff::from_millis(2)
+            .factor(250)
+            .max_delay(Duration::from_secs(60))
     }
 
-    async fn connect(&self) -> Result<MaybeTlsStream<TcpStream>, WebSocketError> {
+    async fn tls_connect(&self) -> Result<MaybeTlsStream<TcpStream>, WebSocketError> {
         let ip = dns::Resolver
             .lookup_ip(self.host.clone())
             .await
@@ -166,49 +165,170 @@ impl WebSocketConnector {
             .context(ConnectError)
     }
 
+    async fn connect(&self) -> Result<WsStream<MaybeTlsStream<TcpStream>>, WebSocketError> {
+        let request = (&self.uri).into_client_request().context(CreateFailed)?;
+        let maybe_tls = self.tls_connect().await?;
+
+        let ws_config = WebSocketConfig {
+            max_send_queue: None, // don't buffer messages
+            ..Default::default()
+        };
+
+        let (ws_stream, _response) = client_async_with_config(request, maybe_tls, Some(ws_config))
+            .await
+            .context(CreateFailed)?;
+
+        Ok(ws_stream)
+    }
+
+    async fn connect_backoff(&self) -> WsStream<MaybeTlsStream<TcpStream>> {
+        let mut backoff = Self::fresh_backoff();
+        loop {
+            match self.connect().await {
+                Ok(ws_stream) => {
+                    emit!(WsConnectionEstablished {});
+                    return ws_stream;
+                }
+                Err(error) => {
+                    emit!(WsConnectionFailed { error });
+                    sleep(backoff.next().unwrap()).await;
+                }
+            }
+        }
+    }
+
     async fn healthcheck(&self) -> crate::Result<()> {
         self.connect().await.map(|_| ()).map_err(Into::into)
     }
 }
 
-pub struct WebSocketSink<WS> {
+pub struct WebSocketSink {
     encoding: EncodingConfig<Encoding>,
-    ws_stream: WS,
+    connector: WebSocketConnector,
     acker: Acker,
 }
 
-impl<WS> WebSocketSink<WS> {
-    fn new(config: WebSocketSinkConfig, ws_stream: WS, acker: Acker) -> Self {
+impl WebSocketSink {
+    fn new(config: &WebSocketSinkConfig, connector: WebSocketConnector, acker: Acker) -> Self {
         Self {
-            encoding: config.encoding,
-            ws_stream,
+            encoding: config.encoding.clone(),
+            connector,
             acker,
         }
+    }
+
+    async fn create_sink_and_stream<Fut>(
+        &self,
+        tripwire: Fut,
+    ) -> (
+        impl Sink<Message, Error = WsError>,
+        impl Stream<Item = Result<Message, WsError>>,
+    )
+    where
+        Fut: Future + Send + 'static,
+        Fut::Output: Send,
+    {
+        let ws_stream = self.connector.connect_backoff().await;
+        let (ws_sink, ws_stream) = ws_stream.split();
+        let ws_stream = ws_stream.take_until(tripwire);
+        (ws_sink, ws_stream)
+    }
+
+    async fn handle_events<I, WS, O>(
+        &self,
+        input: &mut I,
+        ws_stream: &mut WS,
+        ws_sink: &mut O,
+    ) -> Result<(), ()>
+    where
+        I: Stream<Item = Event> + Unpin,
+        WS: Stream<Item = Result<Message, WsError>> + Unpin,
+        O: Sink<Message, Error = WsError> + Unpin,
+    {
+        loop {
+            let result = tokio::select! {
+                biased;
+
+                Some(msg) = ws_stream.next() => {
+                    // Check if ping are received from a websocket server.
+                    // Pongs are sent automatically by tungstenite during reading from the stream.
+                    msg.map(|_| ())
+                },
+                Some(event) = input.next() => {
+                    let log = encode_event(event, &self.encoding);
+                    match log {
+                        Some(msg) => {
+                            let msg_len = msg.len();
+                            match ws_sink.send(msg).await {
+                                Ok(_) => {
+                                    emit!(WsEventSent { byte_size: msg_len });
+                                    self.acker.ack(1);
+                                    Ok(())
+                                },
+                                Err(error) => Err(error),
+                            }
+                        },
+                        None => {
+                            self.acker.ack(1);
+                            Ok(())
+                        }
+                    }
+                },
+                else => break,
+            };
+
+            if let Err(error) = result {
+                if is_closed(&error) {
+                    emit!(WsConnectionShutdown);
+                } else {
+                    emit!(WsConnectionError { error });
+                }
+                return Err(());
+            }
+        }
+
+        Ok(())
     }
 }
 
 #[async_trait]
-impl<WS> StreamSink for WebSocketSink<WS>
-where
-    WS: Sink<Message> + Unpin + Send,
-    <WS as Sink<Message>>::Error: Error + Debug,
-{
-    async fn run(&mut self, mut input: BoxStream<'_, Event>) -> Result<(), ()> {
-        while let Some(event) = input.next().await {
-            let log = encode_event(event, &self.encoding);
+impl StreamSink for WebSocketSink {
+    async fn run(&mut self, input: BoxStream<'_, Event>) -> Result<(), ()> {
+        let (trigger, tripwire) = oneshot::channel::<()>();
+        let tripwire = tripwire.map(|_| ()).shared();
 
-            if let Some(msg) = log {
-                let msg_len = msg.len();
-                match self.ws_stream.send(msg).await {
-                    Ok(_) => emit!(WebSocketEventSendSuccess { byte_size: msg_len }),
-                    Err(error) => emit!(WebSocketEventSendFail { error }),
-                }
+        let input = input.fuse().on_terminated(async move {
+            // Input is terminated, closes websocket stream
+            let _ = trigger.send(());
+        });
+        pin_mut!(input);
+
+        loop {
+            let (ws_sink, ws_stream) = self.create_sink_and_stream(tripwire.clone()).await;
+            pin_mut!(ws_sink);
+            pin_mut!(ws_stream);
+
+            let _open_token = OpenGauge::new().open(|count| emit!(ConnectionOpen { count }));
+
+            if self
+                .handle_events(&mut input, &mut ws_stream, &mut ws_sink)
+                .await
+                .is_ok()
+            {
+                let _ = ws_sink.close().await;
+                break;
             }
-
-            self.acker.ack(1);
         }
 
         Ok(())
+    }
+}
+
+fn is_closed(error: &WsError) -> bool {
+    match error {
+        WsError::ConnectionClosed | WsError::AlreadyClosed => true,
+        WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake) => true,
+        _ => false,
     }
 }
 
@@ -237,9 +357,10 @@ mod tests {
         test_util::{next_addr, random_lines_with_stream, trace_init, CountReceiver},
         tls::{self, TlsOptions},
     };
-    use futures::{future::ready, stream::StreamExt};
+    use futures::{future::ready, FutureExt, StreamExt};
     use serde_json::Value as JsonValue;
     use std::net::SocketAddr;
+    use tokio::time::timeout;
     use tokio_tungstenite::{
         accept_async,
         tungstenite::{
@@ -316,12 +437,46 @@ mod tests {
         send_events_and_assert(addr, config, tls).await;
     }
 
+    #[tokio::test]
+    async fn test_websocket_reconnect() {
+        trace_init();
+
+        let addr = next_addr();
+        let config = WebSocketSinkConfig {
+            uri: format!("ws://{}", addr.to_string()),
+            tls: None,
+            encoding: Encoding::Json.into(),
+        };
+        let tls = MaybeTlsSettings::Raw(());
+
+        let mut receiver = create_count_receiver(addr.clone(), tls.clone(), true);
+
+        let context = SinkContext::new_test();
+        let (sink, _healthcheck) = config.build(context).await.unwrap();
+
+        let (_lines, events) = random_lines_with_stream(10, 100, None);
+        let events = events.then(|event| async move {
+            sleep(Duration::from_millis(10)).await;
+            event
+        });
+        let _ = tokio::spawn(sink.run(events));
+
+        receiver.connected().await;
+        sleep(Duration::from_millis(500)).await;
+        assert!(!receiver.await.is_empty());
+
+        let mut receiver = create_count_receiver(addr, tls, false);
+        assert!(timeout(Duration::from_secs(10), receiver.connected())
+            .await
+            .is_ok());
+    }
+
     async fn send_events_and_assert(
         addr: SocketAddr,
         config: WebSocketSinkConfig,
         tls: MaybeTlsSettings,
     ) {
-        let mut receiver = create_count_receiver(addr, tls);
+        let mut receiver = create_count_receiver(addr, tls, false);
 
         let context = SinkContext::new_test();
         let (sink, _healthcheck) = config.build(context).await.unwrap();
@@ -341,13 +496,20 @@ mod tests {
         }
     }
 
-    fn create_count_receiver(addr: SocketAddr, tls: MaybeTlsSettings) -> CountReceiver<String> {
+    fn create_count_receiver(
+        addr: SocketAddr,
+        tls: MaybeTlsSettings,
+        interrupt_stream: bool,
+    ) -> CountReceiver<String> {
         CountReceiver::receive_items_stream(move |tripwire, connected| async move {
             let listener = tls.bind(&addr).await.unwrap();
             let stream = listener.accept_stream();
 
+            let tripwire = tripwire.map(|_| ()).shared();
+            let stream_tripwire = tripwire.clone();
             let mut connected = Some(connected);
-            stream
+
+            let stream = stream
                 .take_until(tripwire)
                 .filter_map(|maybe_tls_stream| async move {
                     let maybe_tls_stream = maybe_tls_stream.unwrap();
@@ -369,7 +531,12 @@ mod tests {
                     ws_stream
                 })
                 .flatten()
-                .map(|msg| msg.unwrap())
+                .map(|msg| msg.unwrap());
+
+            match interrupt_stream {
+                false => stream.boxed(),
+                true => stream.take_until(stream_tripwire).boxed(),
+            }
         })
     }
 }
