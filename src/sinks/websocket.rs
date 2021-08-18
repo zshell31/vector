@@ -297,13 +297,16 @@ impl StreamSink for WebSocketSink {
         let (trigger, tripwire) = oneshot::channel::<()>();
         let tripwire = tripwire.map(|_| ()).shared();
 
-        let input = input.fuse().on_terminated(async move {
-            // Input is terminated, closes websocket stream
-            let _ = trigger.send(());
-        });
+        let input = input
+            .fuse()
+            .on_terminated(async move {
+                // Input is terminated, closes websocket stream
+                let _ = trigger.send(());
+            })
+            .peekable();
         pin_mut!(input);
 
-        loop {
+        while input.as_mut().peek().await.is_some() {
             let (ws_sink, ws_stream) = self.create_sink_and_stream(tripwire.clone()).await;
             pin_mut!(ws_sink);
             pin_mut!(ws_stream);
@@ -316,7 +319,6 @@ impl StreamSink for WebSocketSink {
                 .is_ok()
             {
                 let _ = ws_sink.close().await;
-                break;
             }
         }
 
