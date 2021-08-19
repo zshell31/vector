@@ -13,17 +13,14 @@ use crate::{
         retries::ExponentialBackoff,
         StreamSink,
     },
-    stream::StreamUtilExt,
     tls::{MaybeTlsSettings, MaybeTlsStream, TlsConfig, TlsError},
 };
 use async_trait::async_trait;
-use futures::{
-    pin_mut, sink::SinkExt, stream::BoxStream, Future, FutureExt, Sink, Stream, StreamExt,
-};
+use futures::{pin_mut, sink::SinkExt, stream::BoxStream, Sink, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Snafu};
 use std::{fmt::Debug, net::SocketAddr, time::Duration};
-use tokio::{net::TcpStream, sync::oneshot, time::sleep};
+use tokio::{net::TcpStream, time::sleep};
 use tokio_tungstenite::{
     client_async_with_config,
     tungstenite::{
@@ -217,21 +214,14 @@ impl WebSocketSink {
         }
     }
 
-    async fn create_sink_and_stream<Fut>(
+    async fn create_sink_and_stream(
         &self,
-        tripwire: Fut,
     ) -> (
         impl Sink<Message, Error = WsError>,
         impl Stream<Item = Result<Message, WsError>>,
-    )
-    where
-        Fut: Future + Send + 'static,
-        Fut::Output: Send,
-    {
+    ) {
         let ws_stream = self.connector.connect_backoff().await;
-        let (ws_sink, ws_stream) = ws_stream.split();
-        let ws_stream = ws_stream.take_until(tripwire);
-        (ws_sink, ws_stream)
+        ws_stream.split()
     }
 
     async fn handle_events<I, WS, O>(
@@ -254,8 +244,11 @@ impl WebSocketSink {
                     // Pongs are sent automatically by tungstenite during reading from the stream.
                     msg.map(|_| ())
                 },
-                Some(event) = input.next() => {
-                    let log = encode_event(event, &self.encoding);
+                event = input.next() => {
+                    if event.is_none() {
+                        break;
+                    }
+                    let log = encode_event(event.unwrap(), &self.encoding);
                     match log {
                         Some(msg) => {
                             let msg_len = msg.len();
@@ -294,20 +287,11 @@ impl WebSocketSink {
 #[async_trait]
 impl StreamSink for WebSocketSink {
     async fn run(&mut self, input: BoxStream<'_, Event>) -> Result<(), ()> {
-        let (trigger, tripwire) = oneshot::channel::<()>();
-        let tripwire = tripwire.map(|_| ()).shared();
-
-        let input = input
-            .fuse()
-            .on_terminated(async move {
-                // Input is terminated, closes websocket stream
-                let _ = trigger.send(());
-            })
-            .peekable();
+        let input = input.fuse().peekable();
         pin_mut!(input);
 
         while input.as_mut().peek().await.is_some() {
-            let (ws_sink, ws_stream) = self.create_sink_and_stream(tripwire.clone()).await;
+            let (ws_sink, ws_stream) = self.create_sink_and_stream().await;
             pin_mut!(ws_sink);
             pin_mut!(ws_stream);
 
