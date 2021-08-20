@@ -249,23 +249,20 @@ impl WebSocketSink {
                         break;
                     }
                     let log = encode_event(event.unwrap(), &self.encoding);
-                    match log {
+                    let res = match log {
                         Some(msg) => {
                             let msg_len = msg.len();
-                            match ws_sink.send(msg).await {
-                                Ok(_) => {
-                                    emit!(WsEventSent { byte_size: msg_len });
-                                    self.acker.ack(1);
-                                    Ok(())
-                                },
-                                Err(error) => Err(error),
-                            }
+                            ws_sink.send(msg).await.map(|_| {
+                                emit!(WsEventSent { byte_size: msg_len });
+                            })
                         },
                         None => {
                             self.acker.ack(1);
                             Ok(())
                         }
-                    }
+                    };
+                    self.acker.ack(1);
+                    res
                 },
                 else => break,
             };
