@@ -16,11 +16,23 @@ use crate::{
     tls::{MaybeTlsSettings, MaybeTlsStream, TlsConfig, TlsError},
 };
 use async_trait::async_trait;
-use futures::{pin_mut, sink::SinkExt, stream::BoxStream, Sink, Stream, StreamExt};
+use futures::{
+    future::{self},
+    pin_mut,
+    sink::SinkExt,
+    stream::BoxStream,
+    Sink, Stream, StreamExt,
+};
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Snafu};
-use std::{fmt::Debug, net::SocketAddr, time::Duration};
-use tokio::{net::TcpStream, time::sleep};
+use std::{
+    fmt::Debug,
+    io,
+    net::SocketAddr,
+    task::{Context, Poll},
+    time::{Duration, Instant},
+};
+use tokio::{net::TcpStream, time};
 use tokio_tungstenite::{
     client_async_with_config,
     tungstenite::{
@@ -50,6 +62,8 @@ pub struct WebSocketSinkConfig {
     uri: String,
     tls: Option<TlsConfig>,
     encoding: EncodingConfig<Encoding>,
+    ping_interval: Option<u64>,
+    ping_timeout: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Derivative, Deserialize, Serialize, Eq, PartialEq)]
@@ -188,7 +202,7 @@ impl WebSocketConnector {
                 }
                 Err(error) => {
                     emit!(WsConnectionFailed { error });
-                    sleep(backoff.next().unwrap()).await;
+                    time::sleep(backoff.next().unwrap()).await;
                 }
             }
         }
@@ -199,10 +213,35 @@ impl WebSocketConnector {
     }
 }
 
+struct PingInterval {
+    interval: Option<time::Interval>,
+}
+
+impl PingInterval {
+    fn new(period: Option<u64>) -> Self {
+        Self {
+            interval: period.map(|period| time::interval(Duration::from_secs(period))),
+        }
+    }
+
+    fn poll_tick(&mut self, cx: &mut Context<'_>) -> Poll<time::Instant> {
+        match self.interval.as_mut() {
+            Some(interval) => interval.poll_tick(cx),
+            None => Poll::Pending,
+        }
+    }
+
+    async fn tick(&mut self) -> time::Instant {
+        future::poll_fn(|cx| self.poll_tick(cx)).await
+    }
+}
+
 pub struct WebSocketSink {
     encoding: EncodingConfig<Encoding>,
     connector: WebSocketConnector,
     acker: Acker,
+    ping_interval: Option<u64>,
+    ping_timeout: Option<u64>,
 }
 
 impl WebSocketSink {
@@ -211,6 +250,8 @@ impl WebSocketSink {
             encoding: config.encoding.clone(),
             connector,
             acker,
+            ping_interval: config.ping_interval.filter(|v| *v > 0),
+            ping_timeout: config.ping_timeout.filter(|v| *v > 0),
         }
     }
 
@@ -224,8 +265,21 @@ impl WebSocketSink {
         ws_stream.split()
     }
 
+    fn check_received_pong_time(&self, last_pong: &Instant) -> Result<(), WsError> {
+        if let Some(ping_timeout) = self.ping_timeout {
+            if last_pong.elapsed() > Duration::from_secs(ping_timeout) {
+                return Err(WsError::Io(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Pong not received in time",
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     async fn handle_events<I, WS, O>(
-        &self,
+        &mut self,
         input: &mut I,
         ws_stream: &mut WS,
         ws_sink: &mut O,
@@ -235,15 +289,37 @@ impl WebSocketSink {
         WS: Stream<Item = Result<Message, WsError>> + Unpin,
         O: Sink<Message, Error = WsError> + Unpin,
     {
+        const PING: &[u8] = b"PING";
+
+        let mut ping_interval = PingInterval::new(self.ping_interval);
+
+        if let Err(error) = ws_sink.send(Message::Ping(PING.to_vec())).await {
+            emit!(WsConnectionError { error });
+            return Err(());
+        }
+        let mut last_pong = Instant::now();
+
         loop {
             let result = tokio::select! {
-                biased;
+                _ = ping_interval.tick() => {
+                    match self.check_received_pong_time(&last_pong) {
+                        Ok(()) => ws_sink.send(Message::Ping(PING.to_vec())).await.map(|_| ()),
+                        Err(e) => Err(e)
+                    }
+                },
 
                 Some(msg) = ws_stream.next() => {
-                    // Check if ping are received from a websocket server.
                     // Pongs are sent automatically by tungstenite during reading from the stream.
-                    msg.map(|_| ())
+                    match msg {
+                        Ok(Message::Pong(_)) => {
+                            last_pong = Instant::now();
+                            Ok(())
+                        },
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(e)
+                    }
                 },
+
                 event = input.next() => {
                     if event.is_none() {
                         break;
@@ -340,7 +416,7 @@ mod tests {
         test_util::{next_addr, random_lines_with_stream, trace_init, CountReceiver},
         tls::{self, TlsOptions},
     };
-    use futures::{future::ready, FutureExt, StreamExt};
+    use futures::{future, FutureExt, StreamExt};
     use serde_json::Value as JsonValue;
     use std::net::SocketAddr;
     use tokio::time::timeout;
@@ -388,6 +464,8 @@ mod tests {
             uri: format!("ws://{}", addr.to_string()),
             tls: None,
             encoding: Encoding::Json.into(),
+            ping_interval: None,
+            ping_timeout: None,
         };
         let tls = MaybeTlsSettings::Raw(());
 
@@ -415,6 +493,8 @@ mod tests {
                 },
             }),
             encoding: Encoding::Json.into(),
+            ping_timeout: None,
+            ping_interval: None,
         };
 
         send_events_and_assert(addr, config, tls).await;
@@ -429,6 +509,8 @@ mod tests {
             uri: format!("ws://{}", addr.to_string()),
             tls: None,
             encoding: Encoding::Json.into(),
+            ping_interval: None,
+            ping_timeout: None,
         };
         let tls = MaybeTlsSettings::Raw(());
 
@@ -439,13 +521,13 @@ mod tests {
 
         let (_lines, events) = random_lines_with_stream(10, 100, None);
         let events = events.then(|event| async move {
-            sleep(Duration::from_millis(10)).await;
+            time::sleep(Duration::from_millis(10)).await;
             event
         });
         let _ = tokio::spawn(sink.run(events));
 
         receiver.connected().await;
-        sleep(Duration::from_millis(500)).await;
+        time::sleep(Duration::from_millis(500)).await;
         assert!(!receiver.await.is_empty());
 
         let mut receiver = create_count_receiver(addr, tls, false);
@@ -498,23 +580,27 @@ mod tests {
                     let maybe_tls_stream = maybe_tls_stream.unwrap();
                     let ws_stream = accept_async(maybe_tls_stream).await.unwrap();
 
-                    Some(ws_stream.filter_map(|msg| {
-                        ready(match msg {
-                            Ok(msg) if msg.is_text() => Some(Ok(msg.into_text().unwrap())),
-                            Err(WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake)) => {
-                                None
-                            }
-                            Err(e) => Some(Err(e)),
-                            _ => None,
-                        })
-                    }))
+                    Some(
+                        ws_stream
+                            .filter_map(|msg| {
+                                future::ready(match msg {
+                                    Ok(msg) if msg.is_text() => Some(Ok(msg.into_text().unwrap())),
+                                    Err(WsError::Protocol(
+                                        ProtocolError::ResetWithoutClosingHandshake,
+                                    )) => None,
+                                    Err(e) => Some(Err(e)),
+                                    _ => None,
+                                })
+                            })
+                            .take_while(|msg| future::ready(msg.is_ok()))
+                            .filter_map(|msg| future::ready(msg.ok())),
+                    )
                 })
                 .map(move |ws_stream| {
                     connected.take().map(|trigger| trigger.send(()));
                     ws_stream
                 })
-                .flatten()
-                .map(|msg| msg.unwrap());
+                .flatten();
 
             match interrupt_stream {
                 false => stream.boxed(),

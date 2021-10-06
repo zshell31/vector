@@ -75,6 +75,27 @@ components: sinks: websocket: {
 				syntax: "literal"
 			}
 		}
+		ping_interval: {
+			common:      true
+			description: "Send WebSocket pings each this number of seconds."
+			required:    false
+			warnings: []
+			type: uint: {
+				default: null
+				unit:    "seconds"
+			}
+		}
+		ping_timeout: {
+			common:        true
+			description:   "Try to reconnect to the WebSocket server if pong not received for this number of seconds."
+			relevant_when: "ping_interval is set"
+			required:      false
+			warnings: ["This parameter is not taken into account if ping_interval is not set"]
+			type: uint: {
+				default: null
+				unit:    "seconds"
+			}
+		}
 	}
 
 	input: {
